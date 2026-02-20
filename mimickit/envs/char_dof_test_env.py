@@ -9,6 +9,9 @@ class CharDofTestEnv(char_env.CharEnv):
     def __init__(self, env_config, engine_config, num_envs, device, visualize):
         self._time_per_dof = 4.0
 
+        env_config = dict(env_config)
+        env_config["enable_action_fatigue"] = False
+
         super().__init__(env_config=env_config, engine_config=engine_config,
                          num_envs=num_envs, device=device, visualize=visualize)
 

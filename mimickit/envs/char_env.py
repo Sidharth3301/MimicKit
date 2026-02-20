@@ -19,6 +19,7 @@ class CharEnv(sim_env.SimEnv):
         self._global_obs = env_config["global_obs"]
         self._root_height_obs = env_config.get("root_height_obs", True)
         self._zero_center_action = env_config.get("zero_center_action", False)
+        self._enable_action_fatigue = env_config.get("enable_action_fatigue", True)
         
         super().__init__(env_config=env_config, engine_config=engine_config,
                          num_envs=num_envs, device=device, visualize=visualize, 
@@ -120,6 +121,7 @@ class CharEnv(sim_env.SimEnv):
         return
     
     def _build_action_space(self):
+        self._action_dof_size = self._get_action_dof_size()
         control_mode = self._engine.get_control_mode()
 
         if (control_mode == engine.ControlMode.none):
@@ -149,13 +151,17 @@ class CharEnv(sim_env.SimEnv):
                 j_dim = self._kin_char_model.get_joint_dof_dim(j)
                 assert(j_dim <= 1), "pd_explicit only supports 1D joints"
 
+        if (self._enable_action_fatigue):
+            fat_low = np.zeros_like(low)
+            fat_high = np.ones_like(high)
+            low = np.concatenate([low, fat_low], axis=0)
+            high = np.concatenate([high, fat_high], axis=0)
+
         action_space = spaces.Box(low=low, high=high)
         return action_space
     
     def _build_action_bounds_none(self):
-        char_id = self._get_char_id()
-        dof_pos = self._engine.get_dof_pos(char_id)
-        action_size = int(dof_pos.shape[-1])
+        action_size = self._action_dof_size
         low = -np.ones([action_size], dtype=np.float32)
         high = np.ones([action_size], dtype=np.float32)
         return low, high
@@ -205,17 +211,13 @@ class CharEnv(sim_env.SimEnv):
         return low, high
 
     def _build_action_bounds_vel(self):
-        char_id = self._get_char_id()
-        dof_pos = self._engine.get_dof_pos(char_id)
-        action_size = int(dof_pos.shape[-1])
+        action_size = self._action_dof_size
         low = -2.0 * np.pi * np.ones([action_size], dtype=np.float32)
         high = 2.0 * np.pi * np.ones([action_size], dtype=np.float32)
         return low, high
 
     def _build_action_bounds_torque(self, torque_lim):
-        char_id = self._get_char_id()
-        dof_pos = self._engine.get_dof_pos(char_id)
-        assert(dof_pos.shape[-1] == len(torque_lim))
+        assert(self._action_dof_size == len(torque_lim))
         low = -np.array(torque_lim, dtype=np.float32)
         high = np.array(torque_lim, dtype=np.float32)
         return low, high
@@ -327,8 +329,20 @@ class CharEnv(sim_env.SimEnv):
     def _apply_action(self, actions):
         char_id = self._get_char_id()
         clip_action = torch.minimum(torch.maximum(actions, self._action_bound_low), self._action_bound_high)
-        self._engine.set_cmd(char_id, clip_action)
+
+        if (self._enable_action_fatigue):
+            cmd = clip_action[..., :self._action_dof_size]
+            fatigue = clip_action[..., self._action_dof_size:]
+            self._engine.set_cmd(char_id, cmd)
+            self._engine.set_dof_fatigue(char_id, fatigue)
+        else:
+            self._engine.set_cmd(char_id, clip_action)
         return
+
+    def _get_action_dof_size(self):
+        char_id = self._get_char_id()
+        dof_pos = self._engine.get_dof_pos(char_id)
+        return int(dof_pos.shape[-1])
     
     def _build_body_ids_tensor(self, body_names):
         char_id = self._get_char_id()

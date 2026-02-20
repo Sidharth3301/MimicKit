@@ -265,6 +265,7 @@ class Controls:
         self.target_pos = []
         self.target_vel = []
         self.joint_force = []
+        self.dof_fatigue = []
         
         for obj_id in range(objs_per_env):
             body_start = articulation_start[obj_id]
@@ -279,6 +280,7 @@ class Controls:
             self.target_pos.append(obj_target_pos)
             self.target_vel.append(obj_target_vel)
             self.joint_force.append(obj_joint_force)
+            self.dof_fatigue.append(torch.ones_like(obj_joint_force))
 
         return
 
@@ -438,11 +440,15 @@ class NewtonEngine(engine.Engine):
         elif (self._control_mode == engine.ControlMode.vel):
             self._controls.target_vel[obj_id][:] = cmd
         elif (self._control_mode == engine.ControlMode.torque):
-            self._controls.joint_force[obj_id][:] = cmd
+            self._controls.joint_force[obj_id][:] = cmd * self._controls.dof_fatigue[obj_id]
         elif (self._control_mode == engine.ControlMode.pd_explicit):
             self._controls.target_pos[obj_id][:] = cmd
         else:
             assert(False), "Unsupported control mode: {}".format(self._control_mode)
+        return
+
+    def set_dof_fatigue(self, obj_id, fatigue):
+        self._controls.dof_fatigue[obj_id][:] = fatigue
         return
     
     def set_camera_pose(self, pos, look_at):
@@ -1082,10 +1088,16 @@ class NewtonEngine(engine.Engine):
         tar_dof = control.joint_target_pos
 
         torque = self._kp_raw * (tar_dof - dof_pos) - self._kd_raw * dof_vel
+        fatigue = torch.cat(self._controls.dof_fatigue, dim=-1)
+        fatigue = wp.from_torch(fatigue.reshape(-1), dtype=wp.float32)
+        torque_lim = wp.clone(self._torque_lim_raw)
+        wp.launch(kernel=mul_arrays,
+                  dim=torque.shape[0],
+                  inputs=[torque_lim, fatigue])
         wp.launch(
             kernel=clamp_arrays,
             dim=torque.shape[0],
-            inputs=[torque, -self._torque_lim_raw, self._torque_lim_raw]
+            inputs=[torque, -torque_lim, torque_lim]
         )
         wp.copy(control.joint_f, torque)
         return
@@ -1181,4 +1193,11 @@ def exp_map_to_quat_indexed(in_dof: wp.array(dtype=float),
     out_q[q_idx + 1] = q[1]
     out_q[q_idx + 2] = q[2]
     out_q[q_idx + 3] = q[3]
+    return
+
+@wp.kernel
+def mul_arrays(x: wp.array(dtype=float),
+               y: wp.array(dtype=float)):
+    i = wp.tid()
+    x[i] = x[i] * y[i]
     return

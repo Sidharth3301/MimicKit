@@ -215,6 +215,10 @@ class IsaacGymEngine(engine.Engine):
             obj_cmd = self._obj_dof_cmd[obj_id]
             obj_cmd[:] = cmd
         return
+
+    def set_dof_fatigue(self, obj_id, fatigue):
+        self._obj_dof_fatigue[obj_id][:] = fatigue
+        return
     
     def set_camera_pose(self, pos, look_at):
         self._gym.viewer_camera_look_at(self._viewer, None, 
@@ -603,7 +607,8 @@ class IsaacGymEngine(engine.Engine):
         return
 
     def _set_actuation_torque(self, torque):
-        torque_clip = torch.clip(torque, -self._torque_lim_raw, self._torque_lim_raw)
+        torque_lim = self._torque_lim_raw * self._dof_fatigue_raw
+        torque_clip = torch.clip(torque, -torque_lim, torque_lim)
         torque_tensor = gymtorch.unwrap_tensor(torque_clip)
         self._gym.set_dof_actuation_force_tensor(self._sim, torque_tensor)
         return
@@ -855,11 +860,13 @@ class IsaacGymEngine(engine.Engine):
         self._torque_lim_raw = [torch.cat(lim) for lim in self._obj_torque_lim]
         self._torque_lim_raw = torch.stack(self._torque_lim_raw, dim=0)
 
+        self._dof_fatigue_raw = torch.ones_like(self._kp_raw)
         self._dof_cmd_raw = torch.zeros_like(self._kp_raw)
 
         self._obj_kp = []
         self._obj_kd = []
         self._obj_torque_lim = []
+        self._obj_dof_fatigue = []
         self._obj_dof_cmd = []
 
         dof_idx0 = 0
@@ -871,11 +878,13 @@ class IsaacGymEngine(engine.Engine):
             obj_kp = self._kp_raw[..., dof_idx0:dof_idx1]
             obj_kd = self._kd_raw[..., dof_idx0:dof_idx1]
             obj_torque_lim = self._torque_lim_raw[..., dof_idx0:dof_idx1]
+            obj_dof_fatigue = self._dof_fatigue_raw[..., dof_idx0:dof_idx1]
             obj_dof_cmd = self._dof_cmd_raw[..., dof_idx0:dof_idx1]
 
             self._obj_kp.append(obj_kp)
             self._obj_kd.append(obj_kd)
             self._obj_torque_lim.append(obj_torque_lim)
+            self._obj_dof_fatigue.append(obj_dof_fatigue)
             self._obj_dof_cmd.append(obj_dof_cmd)
 
             dof_idx0 = dof_idx1
