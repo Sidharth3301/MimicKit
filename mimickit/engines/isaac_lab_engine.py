@@ -129,6 +129,7 @@ class IsaacLabEngine(engine.Engine):
         self._sim.reset()
         
         self._build_order_tensors()
+        self._build_fatigue_tensors()
         self._build_sim_tensors()
         return
     
@@ -189,11 +190,16 @@ class IsaacLabEngine(engine.Engine):
         elif (self._control_mode == engine.ControlMode.vel):
             obj.set_joint_velocity_target(sim_cmd)
         elif (self._control_mode == engine.ControlMode.torque):
-            obj.set_joint_effort_target(sim_cmd)
+            effort = sim_cmd * self._obj_dof_fatigue[obj_id][:, dof_order_common2sim]
+            obj.set_joint_effort_target(effort)
         elif (self._control_mode == engine.ControlMode.pd_explicit):
             obj.set_joint_position_target(sim_cmd)
         else:
             assert(False), "Unsupported control mode: {}".format(self._control_mode)
+        return
+
+    def set_dof_fatigue(self, obj_id, fatigue):
+        self._obj_dof_fatigue[obj_id][:] = fatigue
         return
     
     def set_camera_pose(self, pos, look_at):
@@ -1086,6 +1092,14 @@ class IsaacLabEngine(engine.Engine):
         dof_order_common2sim = [dof_order_sim2common.index(i) for i in range(len(dof_order_sim2common))]
 
         return body_order_sim2common, body_order_common2sim, dof_order_sim2common, dof_order_common2sim
+
+    def _build_fatigue_tensors(self):
+        self._obj_dof_fatigue = []
+        for obj_id in range(self.get_objs_per_env()):
+            num_dofs = self.get_obj_num_dofs(obj_id)
+            fatigue = torch.ones([self.get_num_envs(), num_dofs], device=self._device, dtype=torch.float32)
+            self._obj_dof_fatigue.append(fatigue)
+        return
 
     def _build_sim_tensors(self):
         num_envs = self.get_num_envs()

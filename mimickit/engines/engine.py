@@ -40,6 +40,9 @@ class Engine:
     def set_cmd(self, obj_id, cmd):
         return
 
+    def set_dof_fatigue(self, obj_id, fatigue):
+        return
+
     @abc.abstractmethod
     def step(self):
         return
